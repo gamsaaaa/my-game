@@ -1,0 +1,225 @@
+<style>
+  :root { 
+    --blood: #7a0000; --wood-main: #3d251a; --wood-dark: #1a0f0a;
+    --skin: #d1ccc0; --ui-red: #ff0000; --door-wood: #4e342e; --iron: #444;
+  }
+  body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; background: var(--wood-main); overflow: hidden; font-family: 'Courier New', monospace; cursor: none; }
+
+  #floor { position: fixed; inset: 0; background-image: repeating-linear-gradient(90deg, var(--wood-dark) 0px, var(--wood-dark) 5px, transparent 5px, transparent 80px), repeating-linear-gradient(0deg, transparent 0px, rgba(0,0,0,0.4) 1px, transparent 2px, rgba(255,255,255,0.05) 3px); background-size: 80px 100%, 100% 6px; z-index: -1; }
+  
+  #door { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 120px; height: 25px; background: var(--door-wood); border: 4px solid #1a110e; border-top: none; z-index: 11; }
+  .door-hit { animation: slam 0.15s infinite; background: #822 !important; }
+  @keyframes slam { 0%, 100% { transform: translateX(-50%); } 50% { transform: translateX(-51.5%); } }
+
+  #glitch-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 5000; display: none; background: rgba(122, 0, 0, 0.4); mix-blend-mode: multiply; }
+  .glitch-active { display: block !important; animation: shake 0.1s infinite; }
+  #get-out { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: red; font-size: 90px; font-weight: bold; z-index: 5001; display: none; text-shadow: 0 0 20px black; }
+  @keyframes shake { 0% { transform: translate(3px, 3px); } 50% { transform: translate(-3px, -3px); } 100% { transform: translate(2px, -2px); } }
+
+  .battery { position: absolute; width: 10px; height: 16px; background: linear-gradient(#333, #000); border: 1px solid #d4af37; border-top: 4px solid #d4af37; z-index: 5; border-radius: 2px; }
+  .trap { position: absolute; width: 30px; height: 15px; border: 3px solid var(--iron); border-radius: 15px 15px 0 0; z-index: 4; }
+  .trap::after { content: ''; position: absolute; width: 30px; height: 15px; border: 3px solid var(--iron); border-radius: 0 0 15px 15px; top: 12px; left: -3px; }
+  
+  /* BRIGHTER VIGNETTE */
+  #vignette { position: fixed; inset: 0; background: radial-gradient(circle 320px at 50% 50%, transparent, rgba(0,0,0,1) 400px); pointer-events: none; z-index: 1000; transition: opacity 0.05s; }
+  
+  #fade { position: fixed; inset: 0; background: black; z-index: 9999; display: flex; align-items: center; justify-content: center; opacity: 1; transition: 1.5s; color: var(--ui-red); font-size: 40px; text-align: center; pointer-events: none; }
+  #prompt { position: fixed; bottom: 15%; left: 50%; transform: translateX(-50%); color: #fff; background: rgba(0,0,0,0.8); padding: 10px 20px; border: 1px solid red; z-index: 2000; display: none; }
+
+  .prop { position: absolute; z-index: 10; border: 4px solid #000; }
+  #bed { width: 90px; height: 150px; background: #2c3e50; border-top: 25px solid #bdc3c7; bottom: 20px; left: 20px; }
+  #wardrobe { width: 75px; height: 50px; background: #23120b; bottom: 20px; right: 20px; }
+  #table { width: 85px; height: 85px; background: radial-gradient(circle, #3e2723, #000); border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%); border: 6px solid #000; }
+
+  .ent { position: absolute; z-index: 100; pointer-events: none; }
+  #player { width: 24px; height: 24px; background: #fff; border-radius: 50%; box-shadow: 0 0 25px #fff; }
+  #stalker { width: 36px; height: 36px; background: var(--skin); border-radius: 50%; display: none; }
+  .eye { position: absolute; width: 5px; height: 5px; background: red; top: 10px; border-radius: 50%; box-shadow: 0 0 15px red; }
+</style>
+
+<div id="floor"></div>
+<div id="glitch-overlay"></div>
+<div id="get-out">GET OUT!</div>
+<div id="door"></div>
+<div id="prompt">PRESS [E] TO HIDE</div>
+<div id="fade"><h1 id="big-text">NIGHT 1</h1></div>
+<div id="vignette"></div>
+
+<div id="ui" style="position:fixed; top:20px; left:20px; z-index:2000; color:red; font-weight:bold;">
+  <div id="time">12:00 AM</div><div id="bat-txt">BATTERY: 100%</div>
+</div>
+
+<div id="bed" class="prop"></div><div id="wardrobe" class="prop"></div><div id="table" class="prop"></div>
+<div id="player" class="ent"></div>
+<div id="stalker" class="ent"><div class="eye" style="left:8px"></div><div class="eye" style="right:8px"></div></div>
+
+<script>
+  let night = 1, px = 200, py = 250, hour = 0, mins = 0;
+  let stalkX = window.innerWidth/2, stalkY = -100, stalking = false, hidden = false, dead = false;
+  let bat = 100, keys = {}, active = false, stunned = false;
+  let doorHP = 100, doorBroken = false, hideStartTime = 0, currentProp = null, traps = [], batteries = [];
+
+  function spawnBatteries() {
+    batteries.forEach(b => b.el.remove()); batteries = [];
+    for(let i=0; i<6; i++) {
+      let bx = 50 + Math.random()*(window.innerWidth-100), by = 50 + Math.random()*(window.innerHeight-100);
+      if(!checkCollision(bx, by, 40)) {
+        let el = document.createElement('div'); el.className = 'battery';
+        el.style.left = bx+'px'; el.style.top = by+'px'; document.body.appendChild(el);
+        batteries.push({x:bx, y:by, el:el});
+      }
+    }
+  }
+
+  function resetNight() {
+    active = false; hour = 0; mins = 0; stalking = false; hidden = false; dead = false; bat = 100;
+    stunned = false; doorBroken = false; doorHP = 100; traps.forEach(t => t.el.remove()); traps = [];
+    document.getElementById('door').style.display = 'block';
+    document.getElementById('get-out').style.display = 'none';
+    document.getElementById('glitch-overlay').classList.remove('glitch-active');
+    document.getElementById('fade').style.opacity = 1;
+    document.getElementById('stalker').style.display = 'none';
+    document.getElementById('player').style.opacity = 1;
+    px = 200; py = 250; spawnBatteries();
+    setTimeout(() => { document.getElementById('fade').style.opacity = 0; active = true; startTrapTimer(); }, 2500);
+  }
+
+  function startTrapTimer() {
+    if(!active || dead || !doorBroken) return;
+    setTimeout(() => {
+      if(stalking && !dead && !hidden) {
+        let el = document.createElement('div'); el.className = 'trap';
+        el.style.left = stalkX+'px'; el.style.top = stalkY+'px';
+        document.body.appendChild(el); traps.push({x: stalkX, y: stalkY, el: el});
+      }
+      startTrapTimer();
+    }, 12000 - (night * 1500));
+  }
+
+  window.addEventListener('keydown', e => { 
+    keys[e.key.toLowerCase()] = true; 
+    if(e.key.toLowerCase() === 'e' && currentProp && !dead && active && !stunned) {
+      hidden = !hidden;
+      if(hidden) { hideStartTime = Date.now(); document.getElementById('player').style.opacity = "0"; }
+      else { exitHiding(); }
+    }
+  });
+  window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+  function exitHiding() {
+    hidden = false;
+    const r = currentProp.getBoundingClientRect();
+    px = r.left + r.width/2; py = r.top - 50;
+    document.getElementById('player').style.opacity = "1";
+    document.getElementById('glitch-overlay').classList.remove('glitch-active');
+    document.getElementById('get-out').style.display = 'none';
+  }
+
+  function checkCollision(x, y, rad) {
+    if(!doorBroken && y - rad < 30 && x > window.innerWidth/2 - 65 && x < window.innerWidth/2 + 65) return true;
+    let props = document.querySelectorAll('.prop');
+    for (let p of props) {
+      let r = p.getBoundingClientRect();
+      if (x + rad > r.left && x - rad < r.right && y + rad > r.top && y - rad < r.bottom) return true;
+    }
+    return false;
+  }
+
+  setInterval(() => {
+    if(!active || dead) return;
+    mins += 2; if(mins >= 60) { mins = 0; hour++; }
+    document.getElementById('time').innerText = `${hour==0?12:hour}:${mins<10?'0'+mins:mins} AM`;
+    if(hour == 1 && !stalking) stalking = true;
+    if(hour >= 6) { night++; document.getElementById('big-text').innerText = "NIGHT " + night; resetNight(); }
+  }, 200);
+
+  setInterval(() => {
+    if(!active || dead) return;
+    if(bat > 0) { 
+        bat--; document.getElementById('bat-txt').innerText = `BATTERY: ${bat}%`; 
+    } else if(bat <= 0) {
+        dead = true; active = false;
+        document.getElementById('big-text').innerText = "YOU LOSE!";
+        document.getElementById('fade').style.opacity = 1;
+        setTimeout(() => resetNight(), 4000);
+    }
+  }, 1500);
+
+  function loop() {
+    const pEl = document.getElementById('player');
+    const stalkEl = document.getElementById('stalker');
+    const vig = document.getElementById('vignette');
+
+    if(hidden && active) {
+      let elapsed = (Date.now() - hideStartTime) / 1000;
+      if(elapsed > 6) { 
+        document.getElementById('glitch-overlay').classList.add('glitch-active'); 
+        document.getElementById('get-out').style.display = 'block'; 
+      }
+      if(elapsed > 10) { exitHiding(); stunned = true; setTimeout(() => stunned = false, 2000); }
+    }
+
+    if(active && !dead && !hidden && !stunned) {
+      let vx = 0, vy = 0;
+      if(keys['w']) vy -= 4.5; if(keys['s']) vy += 4.5;
+      if(keys['a']) vx -= 4.5; if(keys['d']) vx += 4.5;
+      if (!checkCollision(px + vx, py, 12)) px += vx;
+      if (!checkCollision(px, py + vy, 12)) py += vy;
+
+      batteries.forEach((b, i) => {
+        if(Math.sqrt((px-b.x)**2 + (py-b.y)**2) < 25) {
+          bat = (bat >= 90) ? 100 : bat + 10;
+          b.el.remove(); batteries.splice(i, 1);
+        }
+      });
+
+      traps.forEach((t, i) => {
+        if(Math.sqrt((px-t.x)**2 + (py-t.y)**2) < 22) {
+          stunned = true; t.el.remove(); traps.splice(i, 1);
+          setTimeout(() => stunned = false, 3000);
+        }
+      });
+
+      currentProp = null;
+      document.querySelectorAll('.prop').forEach(p => {
+        let r = p.getBoundingClientRect();
+        if(px > r.left-40 && px < r.right+40 && py > r.top-40 && py < r.bottom+40) currentProp = p;
+      });
+      document.getElementById('prompt').style.display = currentProp ? 'block' : 'none';
+    }
+
+    pEl.style.left = px-12+'px'; pEl.style.top = py-12+'px';
+    
+    // LIGHT LOGIC
+    let lightR = (bat > 0 && active) ? 320 : 0;
+    if(bat < 20 && Math.random() < 0.1) lightR *= 0.8; // Flicker at low battery
+    vig.style.background = `radial-gradient(circle ${lightR}px at ${px}px ${py}px, transparent 0%, rgba(0,0,0,0.2) 60%, rgba(0,0,0,1) 100%)`;
+
+    if(stalking && !dead && active) {
+      if(!doorBroken) {
+        doorHP -= (0.4 + (night * 0.1));
+        document.getElementById('door').classList.add('door-hit');
+        if(doorHP <= 0) { doorBroken = true; document.getElementById('door').style.display = 'none'; stalkEl.style.display = 'block'; stalkY = 40; }
+      } else {
+        let speed = stunned ? 6 : 2.4 + (night * 0.3);
+        let dx = px - stalkX, dy = py - stalkY, d = Math.sqrt(dx*dx+dy*dy);
+        
+        let moveX = (dx/d)*speed, moveY = (dy/d)*speed;
+        if (!checkCollision(stalkX + moveX, stalkY, 18)) stalkX += moveX;
+        if (!checkCollision(stalkX, stalkY + moveY, 18)) stalkY += moveY;
+
+        stalkEl.style.left = stalkX-18+'px'; stalkEl.style.top = stalkY-18+'px';
+        stalkEl.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+
+        if(d < 35 && !hidden) {
+          dead = true; active = false;
+          document.getElementById('big-text').innerText = "THE SKINWALKER HAS GOT YOU";
+          document.getElementById('fade').style.opacity = 1;
+          setTimeout(() => resetNight(), 5000);
+        }
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+  resetNight(); loop();
+</script>
